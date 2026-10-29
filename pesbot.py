@@ -6164,28 +6164,10 @@ def launch_main_loop(serial, ui_queue: Queue, shared_data, shared_lock):
         handle_move_file(current_file, current_folder, [], num_name, mode='code', accumulat=accumulat)
         
     def test_mode(serial, ui_queue):
-        wait_for(
-            serial=serial,
-            detection_type='text',
-            target_file='purpose', # terms of use
-            text_action=lambda:[
-                swipe_down(serial, 467, 468, 467, 98, 1000),
-                time.sleep(1),
-                swipe_down(serial, 467, 468, 467, 98, 1000),
-                time.sleep(1),
-                swipe_down(serial, 467, 468, 467, 98, 1000),
-                time.sleep(1),
-                swipe_down(serial, 467, 468, 467, 98, 1000),
-                time.sleep(1),
-                tap_location(serial, 360, 435, is_ignore_x=True),
-                time.sleep(1),
-                tap_location(serial, 763, 640, is_ignore_x=True),
-            ],
-            text_crop_area=(219, 120, 360, 160),
-            extract_mode = 'name',
-            is_loop=False,
-            is_ignore_x=True
-        )
+        swipe_down(serial, 130, 1440, 130, 1444, 2000, is_ignore_x=True)
+        time.sleep(2)
+        tap_location(serial, 149, 1314, is_ignore_x=True) # กด copy
+        time.sleep(1)
 
         print('test_mode finished')
         

@@ -2524,14 +2524,11 @@ def extract_text_tesseract(
         elif extract_mode == 'normal':
             roi_gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
         elif extract_mode == 'number':
-            roi_gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
-
-            # # ลด noise ก่อน
-            # roi_gray = cv2.GaussianBlur(roi_gray, (3, 3), 0)
-            
-            # # ใช้ CLAHE (Contrast Limited Adaptive Histogram Equalization) เพื่อเพิ่มความ contrast อย่างมนุษย์สำหรับตัวเลข
-            # clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(3, 3))  # เพิ่ม clipLimit จาก 2.0 เป็น 3.0
-            # roi_gray = clahe.apply(roi_gray)
+            # ใช้ logic เดียวกับ BotForge (botforge/core/ocr.py -> preprocess)
+            # ขยาย 2 เท่าด้วย INTER_CUBIC แล้วทำขาวดำด้วย Otsu ช่วยให้ tesseract อ่านเลขเล็ก ๆ ได้ครบหลัก
+            roi_scaled = cv2.resize(roi, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+            roi_gray = cv2.cvtColor(roi_scaled, cv2.COLOR_RGB2GRAY)
+            roi_gray = cv2.threshold(roi_gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
 
         # ใช้ threshold เพื่อทำให้ข้อความชัดขึ้น
         # _, roi_thresh = cv2.threshold(roi_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -2648,7 +2645,9 @@ def extract_text_tesseract(
                     'error': 'ไม่สามารถอ่านข้อความได้'
                 }
         elif extract_mode == 'number':
-            config = '--psm 8 -c tessedit_char_whitelist=0123456789ilLIoOtT'
+            # --psm 7 (มองเป็นข้อความบรรทัดเดียว) แบบ BotForge
+            # ของเดิมใช้ --psm 8 (single word) ซึ่งตัดตัวเลขหลักแรกหายไป เช่นอ่าน 828856 ได้เป็น 08856
+            config = '--psm 7 -c tessedit_char_whitelist=0123456789ilLIoOtT'
             text = pytesseract.image_to_string(roi_resized, config=config)
 
             # แทนที่อักขระที่สับสนให้เป็นตัวเลข
@@ -3498,7 +3497,7 @@ def launch_main_loop(serial, ui_queue: Queue, shared_data, shared_lock):
             time.sleep(1)
             tap_location(serial, 526, 2346, is_ignore_x=True)
             time.sleep(1)
-            
+
             adb_run(
                 [
                     'adb', '-s', str(serial),
@@ -3697,7 +3696,7 @@ def launch_main_loop(serial, ui_queue: Queue, shared_data, shared_lock):
             time.sleep(2)
 
             ui_queue.put(('substage', serial, 'กด save'))
-            tap_location(serial, 938, 2186, is_ignore_x=True)
+            tap_location(serial, 1012, 2208, is_ignore_x=True)
 
             print(f'Created account - Username: {username}, Password: {password}')
 
@@ -3709,7 +3708,10 @@ def launch_main_loop(serial, ui_queue: Queue, shared_data, shared_lock):
                 text_action=lambda:[],
                 text_crop_area=(61, 632, 228, 681),
                 extract_mode = 'name',
-                is_ignore_x=True
+                is_ignore_x=True,
+                pre_action=lambda:[
+                    tap_location(serial, 1012, 2208, is_ignore_x=True)
+                ]
             )
 
             force_stop_browser(serial)
@@ -4205,7 +4207,7 @@ def launch_main_loop(serial, ui_queue: Queue, shared_data, shared_lock):
             text_action=lambda:[
                 tap_location(serial, 908, 2175, is_ignore_x=True), # กด confirmed
             ],
-            text_crop_area=(30, 308, 492, 419), # พื้นที่คำว่า Privacy
+            text_crop_area=(145, 852, 957, 1128), # พื้นที่คำว่า Privacy
             extract_mode = 'name',
             is_ignore_x=True
         )
@@ -4254,94 +4256,40 @@ def launch_main_loop(serial, ui_queue: Queue, shared_data, shared_lock):
         wait_for(
             serial=serial,
             detection_type='text',
-            target_file='xmpp',
+            target_file='thankyou', # Data
+            sub_target_file='thank', # Data
             text_action=lambda:[], 
-            text_crop_area=(408, 1699, 530, 1740),
+            text_crop_area=(44, 1300, 280, 1455),
             extract_mode = 'name',
             is_ignore_x=True,
             pre_action=lambda:[
+                tap_location(serial, 663, 726, is_ignore_x=True),
                 tap_location(serial, 839, 1603, is_ignore_x=True)
             ]
         )
 
-        sixcode = 0
-
-        def extract_sixcode(serial):
-            nonlocal sixcode
-            from collections import Counter
-
-            max_loop_attempts = 5  # ✅ Prevent infinite loop
-            loop_count = 0
-            sixcode_list = []
-
-            while loop_count < max_loop_attempts:
-                loop_count += 1
-                sixcode_list = []
-
-                # เช็ค 3 ครั้ง
-                for _ in range(3):
-                    screen_path = capture_screen(serial)
-
-                    # ✅ Add null check for screenshot capture
-                    if screen_path is None:
-                        logger.error(f'{serial}: capture_screen failed in extract_sixcode')
-                        sixcode_list.append('0')
-                        time.sleep(1)
-                        continue
-
-                    text_crop_area = (46, 1508, 210, 1570) # พื้นที่คำว่า gold sixcode
-                    extract_mode = 'number'
-
-                    tesseract_result = extract_text_tesseract(serial, ui_queue, screen_path, text_crop_area, extract_mode, is_ignore_x=True)
-                    if 'error' in tesseract_result:
-                        print('❌')
-                        sixcode_value = '0'
-                    else:
-                        sixcode_value = tesseract_result['original'].replace(' ', '').replace('\n', '').lower()
-
-                    sixcode_list.append(sixcode_value)
-                    time.sleep(1)  # เพิ่มเวลารอระหว่างเช็ก
-
-                # ตรวจสอบว่า 3 ตัวต่างกันหมด
-                if len(set(sixcode_list)) == 3:
-                    # ถ้าทั้ง 3 ตัวต่างกันหมด ให้วนทำใหม่
-                    print(f"ค่า sixcode ไม่ตรงกัน: {sixcode_list} วนทำใหม่")
-                    continue
-
-                # เอาค่าที่มีมากที่สุด
-                counter = Counter(sixcode_list)
-                gold_sixcode = counter.most_common(1)[0][0]
-                print(f"ค่า sixcode: {sixcode_list} → ผลลัพธ์: {gold_sixcode}")
-                sixcode = gold_sixcode
-                break
-            else:
-                # ✅ If all loop attempts exhausted, use most common value from last attempt
-                if sixcode_list:
-                    counter = Counter(sixcode_list)
-                    sixcode = counter.most_common(1)[0][0]
-
         wait_for(
             serial=serial,
             detection_type='text',
-            target_file='register', # Data
-            sub_target_file='regleter', # Data
+            target_file='thankyou', # Data
+            sub_target_file='thank', # Data
             text_action=lambda:[
-                time.sleep(1),
-                extract_sixcode(serial),
+                time.sleep(3),
+                swipe_down(serial, 92, 1525, 92, 1529, 2000, is_ignore_x=True),
+                tap_location(serial, 149, 1376, is_ignore_x=True), # กด copy
+                time.sleep(2),
                 tap_location(serial, 858, 205, is_ignore_x=True), # กด เพิ่ม tab
                 time.sleep(2),
                 tap_location(serial, 786, 811, is_ignore_x=True), # กด เปลี่ยน tab
             ], 
-            text_crop_area=(339, 849, 519, 920),
+            text_crop_area=(44, 1300, 280, 1455),
             extract_mode = 'name',
             is_ignore_x=True,
             pre_action=lambda:[
                 tap_location(serial, 965, 2175, is_ignore_x=True),
-                tap_location(serial, 881, 700, is_ignore_x=True), # กด เพิ่ม tab
+                tap_location(serial, 881, 720, is_ignore_x=True), # กด เพิ่ม tab
             ]
         )
-
-        print(f'sixcode: {sixcode}')
 
         ui_queue.put(('substage', serial, 'ใส่ 6 หลัก 1'))
         wait_for(
@@ -4349,10 +4297,12 @@ def launch_main_loop(serial, ui_queue: Queue, shared_data, shared_lock):
             detection_type='text',
             target_file='enter', # Data
             text_action=lambda:[
-                tap_location(serial, 217, 1093, is_ignore_x=True), #
+                swipe_down(serial, 864, 944, 864, 1300, 2000, is_ignore_x=True),
                 time.sleep(2),
-                typing_text(sixcode), # กด paste
+                swipe_down(serial, 212, 1104, 212, 1108, 2000, is_ignore_x=True),
                 time.sleep(2),
+                tap_location(serial, 240, 984, is_ignore_x=True), # กด copy
+                time.sleep(1),
                 tap_location(serial, 549, 1531, is_ignore_x=True), # กด next
             ],
             text_crop_area=(145, 575, 343, 681), # พื้นที่คำว่า Data
@@ -4369,6 +4319,9 @@ def launch_main_loop(serial, ui_queue: Queue, shared_data, shared_lock):
             text_crop_area=(576, 674, 904, 769), # พื้นที่คำว่า Data
             extract_mode = 'name',
             is_ignore_x=True,
+            pre_action=lambda:[
+                tap_location(serial, 549, 1531, is_ignore_x=True), # กด next
+            ]
         )
         
         # 4) เก็บ email/password ลง Excel พร้อมคอลัมน์ used
@@ -4381,12 +4334,41 @@ def launch_main_loop(serial, ui_queue: Queue, shared_data, shared_lock):
         ui_queue.put(('substage', serial, 'samak เสร็จ - เริ่มบัญชีถัดไป'))
         ui_queue.put(('reset', serial, None))
 
+    def test_mode():
+        wait_for(
+            serial=serial,
+            detection_type='text',
+            target_file='thankyou', # Data
+            sub_target_file='thank', # Data
+            text_action=lambda:[
+                time.sleep(2),
+                swipe_down(serial, 130, 1440, 130, 1444, 2000, is_ignore_x=True),
+                time.sleep(2),
+                tap_location(serial, 149, 1314, is_ignore_x=True), # กด copy
+                time.sleep(1),
+                tap_location(serial, 858, 205, is_ignore_x=True), # กด เพิ่ม tab
+                time.sleep(2),
+                tap_location(serial, 786, 811, is_ignore_x=True), # กด เปลี่ยน tab
+            ], 
+            text_crop_area=(39, 1271, 264, 1330),
+            extract_mode = 'name',
+            is_ignore_x=True,
+            pre_action=lambda:[
+                tap_location(serial, 965, 2175, is_ignore_x=True),
+                tap_location(serial, 881, 720, is_ignore_x=True), # กด เพิ่ม tab
+            ]
+        )
+
+        print('test_mode finished')
+
     # Continuous workflow while not stopped
     selected_connect_mode = main_configs.get('selected_connect_mode', '')
     if selected_connect_mode == 'connect':
         connect_mode()
     elif selected_connect_mode == 'samak':
         samak_mode()
+    elif selected_connect_mode == 'ทดสอบ':
+        test_mode()
     else:
         print('comming soon')
 
@@ -4913,7 +4895,7 @@ if __name__ == '__main__':
 
     # แถวที่ 1: 
     # === Dropdown ===
-    ctk.CTkOptionMenu(btn_frame,values=['connect', 'samak'],command=on_select_mode,variable=selected_connect_mode,fg_color='white',text_color='black') \
+    ctk.CTkOptionMenu(btn_frame,values=['connect', 'samak', 'ทดสอบ'],command=on_select_mode,variable=selected_connect_mode,fg_color='white',text_color='black') \
         .grid(row=0, column=0, padx=5, pady=5, sticky='ew')
     initial_colspan = 1 if selected_connect_mode.get() == 'connect' else 2
 
